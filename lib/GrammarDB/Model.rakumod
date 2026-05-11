@@ -1,4 +1,4 @@
-unit role GrammarDB::Model 
+unit role GrammarDB::Model;
 
 has Str $.id is required;
 has Bool $!dirty = False;
