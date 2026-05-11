@@ -1,0 +1,25 @@
+use v6;
+use Test;
+use lib 'lib';
+use GrammarDB::Model;
+
+class Account does GrammarDB::Model {
+    has Str $!name;
+    has Str $!email;
+
+    method name() is rw { self.auto-track($!name) }
+    method email() is rw { self.auto-track($!email) }
+
+    method render () { "$!name|$!email" }
+}
+
+plan 5;
+
+ok Account.^does(GrammarDB::Model), 'Account does GrammarDB::Model';
+my $acct = Account.new(id => '0001');
+ok !$acct.is-dirty, 'new account is initially clean';
+$acct.name = 'Chaz';
+ok $acct.is-dirty, 'assignment via auto-track marks object dirty';
+$acct.mark-clean;
+ok !$acct.is-dirty, 'mark-clean resets dirty flag';
+is $acct.render, 'Chaz|', 'render produces expected string';

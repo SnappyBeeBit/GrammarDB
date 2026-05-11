@@ -4,6 +4,17 @@
 
 ---
 
+## Repository Layout
+
+- `lib/GrammarDB/Model.rakumod` — model role and object dirty-tracking logic
+- `lib/GrammarDB/Parser.rakumod` — grammar and action skeleton
+- `lib/GrammarDB/Engine.rakumod` — engine loader, store, and commit logic
+- `lib/GrammarDB/Metadata.rakumod` — metadata/index sidecar manager
+- `main.raku` — root demo entry point
+- `testplan.md` — test plan for validating the implementation
+
+---
+
 ## 1. Core Philosophy
 
 * **Grammar as Schema:** The physical layout of the data on disk is defined by a standard Raku Grammar.

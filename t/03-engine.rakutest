@@ -1,0 +1,65 @@
+use v6;
+use Test;
+use lib 'lib';
+use lib '.';
+use GrammarDB::Engine;
+use GrammarDB::Model;
+
+class Vendor does GrammarDB::Model {
+    has Str $.name;
+    has Str $.email;
+    method render() { "VND|{self.id}|$.name|$.email" }
+}
+
+class Product does GrammarDB::Model {
+    has Str $.name;
+    has Rat $.price;
+    has Str $.category;
+    method render() { "PRD|{self.id}|$.name|$.price|$.category" }
+}
+
+class Listing does GrammarDB::Model {
+    has Str $.vendor-id;
+    has Str $.product-id;
+    has Int $.qty;
+    method render() { "LST|{self.id}|$.vendor-id|$.product-id|$.qty" }
+}
+
+grammar MarketplaceGrammar {
+    token TOP { ^ <record> $ }
+    token record { <vendor> | <product> | <listing> }
+    token vendor  { 'VND|' <id> '|' <name> '|' <email> }
+    token product { 'PRD|' <id> '|' <name> '|' <price> '|' <cat> }
+    token listing { 'LST|' <id> '|' <v_id> '|' <p_id> '|' <qty> }
+    rule id { <[ \w - ]>+ }
+    rule name { <-[|]>+ }
+    rule email { <-[\n]>+ }
+    rule price { <-[|]>+ }
+    rule cat { <-[|]>+ }
+    rule v_id { <-[|]>+ }
+    rule p_id { <-[|]>+ }
+    rule qty { <-[\n]>+ }
+}
+
+class MarketplaceActions {
+    method TOP($/) { make $<record>.made }
+    method record($/) { make $<vendor>.made // $<product>.made // $<listing>.made }
+    method vendor($/)  { make Vendor.new(id => ~$<id>, name => ~$<name>, email => ~$<email>) }
+    method product($/) { make Product.new(id => ~$<id>, name => ~$<name>, price => +$<price>, category => ~$<cat>) }
+    method listing($/) { make Listing.new(id => ~$<id>, vendor-id => ~$<v_id>, product-id => ~$<p_id>, qty => +$<qty>) }
+}
+
+my $path = 't/03-engine-fixture.gdb';
+spurt $path, "VND|V1|Alice|alice@example.com\nPRD|P1|Raku Widget|9.99|Software\nLST|L1|V1|P1|10\n";
+
+plan 4;
+
+my $db = GrammarDB::Engine.new(file => $path, grammar => MarketplaceGrammar, actions => MarketplaceActions);
+$db.load;
+my @software = $db.find-by(Product, 'category', 'Software');
+is @software.elems, 1, 'find-by returns product matches';
+is @software[0].name, 'Raku Widget', 'parsed object is correct';
+@software[0].price = 14.99;
+ok @software[0].is-dirty, 'proxy marks modified object dirty';
+$db.commit;
+ok !@software[0].is-dirty, 'commit cleans dirty object';

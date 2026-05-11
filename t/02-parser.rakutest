@@ -1,0 +1,21 @@
+use v6;
+use Test;
+use lib 'lib';
+use GrammarDB::Parser;
+
+class ParserActions does GrammarDB::Action { }
+
+my $actions = ParserActions.new;
+
+plan 5;
+
+my $m = GrammarDB::Grammar.parse('foo:INT:123', :actions($actions));
+ok $m, 'parse simple version-2 record';
+is $m.made<version>, 2, 'version 2 selected';
+is $m.made<id>, 'foo', 'id parsed';
+is $m.made<type><name>, 'INT', 'int type parsed';
+
+my $m2 = GrammarDB::Grammar.parse('bar:VARCHAR(20):hello', :actions($actions));
+ok $m2, 'parse varchar version-2 record';
+is $m2.made<type><name>, 'VARCHAR', 'varchar type parsed';
+is $m2.made<type><length>, 20, 'varchar length captured';
