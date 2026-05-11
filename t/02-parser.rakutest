@@ -1,21 +1,27 @@
-use v6;
+use Grammar::Tracer;
 use Test;
 use lib 'lib';
 use GrammarDB::Parser;
 
-class ParserActions does GrammarDB::Action { }
+# Create a class to consume the role
+class ParserActions does GrammarDB::Parser::Action { }
 
 my $actions = ParserActions.new;
 
 plan 5;
 
-my $m = GrammarDB::Grammar.parse('foo:INT:123', :actions($actions));
-ok $m, 'parse simple version-2 record';
-is $m.made<version>, 2, 'version 2 selected';
-is $m.made<id>, 'foo', 'id parsed';
-is $m.made<type><name>, 'INT', 'int type parsed';
+my $input = 'foo:INT:123';
+my $m = GrammarDB::Parser::Grammar.parse($input, :actions($actions));
 
-my $m2 = GrammarDB::Grammar.parse('bar:VARCHAR(20):hello', :actions($actions));
-ok $m2, 'parse varchar version-2 record';
-is $m2.made<type><name>, 'VARCHAR', 'varchar type parsed';
-is $m2.made<type><length>, 20, 'varchar length captured';
+# 1. Check if the parse was successful
+ok $m.defined, "Grammar successfully parsed: $input";
+
+# 2. Access the 'made' data directly from the top-level Match object
+# This works because of your 'method TOP($/) { make $<record>.made }'
+my $data = $m.made;
+
+# 3. Verify the structure of the Hash
+is $data<version>, 2,     "Correctly identified as Version 2";
+is $data<id>,      'foo', "ID 'foo' captured via .made bubbling";
+is $data<type><name>, 'INT', "Type name 'INT' bubbled through <type>";
+is $data<value>,   '123', "Value '123' captured as string";

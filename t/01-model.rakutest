@@ -1,4 +1,3 @@
-use v6;
 use Test;
 use lib 'lib';
 use GrammarDB::Model;
@@ -10,7 +9,7 @@ class Account does GrammarDB::Model {
     method name() is rw { self.auto-track($!name) }
     method email() is rw { self.auto-track($!email) }
 
-    method render () { "$!name|$!email" }
+    method render () { "{$!name // ''}|{$!email // ''}" }
 }
 
 plan 5;

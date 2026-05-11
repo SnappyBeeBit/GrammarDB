@@ -1,4 +1,6 @@
-class GrammarDB::Metadata {
+unit module GrammarDB::Metadata;
+
+our class GrammarDB::Metadata {
     has Str $.meta-path;
     has %!indices;
     has %!search-counts;

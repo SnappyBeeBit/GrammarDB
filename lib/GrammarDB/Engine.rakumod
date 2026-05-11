@@ -1,4 +1,7 @@
-class GrammarDB::Engine {
+
+unit module GrammarDB::Engine;
+
+our class GrammarDB::Engine {
     use GrammarDB::Metadata;
     has Str $.file is required;
     has $!grammar is required;
