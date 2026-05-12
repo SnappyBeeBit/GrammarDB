@@ -1,0 +1,21 @@
+# Raku precompiled files
+.precomp/
+*.precomp
+
+# Build artifacts
+__pycache__/
+*.so
+*.o
+*.dylib
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Test artifacts
+*.gdb
+t/*.gdb

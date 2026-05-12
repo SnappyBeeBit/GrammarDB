@@ -7,10 +7,10 @@ has $!actions  is required is built;
 
 has GrammarDB::Metadata $!metadata;
 
-has %!store;
-has %!offsets;
-has %!index-counts;
-has %!indices;
+has %!store of Mu;                           # Maps object IDs to objects
+has %!offsets of Hash;                       # Maps object IDs to {from=>Int, length=>Int}
+has %!index-counts of Int;                   # Tracks lookup counts per attribute
+has %!indices of Hash[Array];                # Maps attribute=>value=>Array of objects
 
 submethod TWEAK(:$grammar, :$actions) {
     # Attributes like $!file and $!grammar are already set by Raku here!
@@ -30,10 +30,10 @@ submethod TWEAK(:$grammar, :$actions) {
 method load(Str $path = $.file) {
     return self unless $path.IO.e;
     my $content = $path.IO.slurp(:bin);
-    my $pos = 0;
-    
-    for $content.decode('utf8').lines -> $line {
-        my $from = $pos;
+    my Int $pos = 0;
+    Model 
+    for $content.decode('utf8').lines -> Str $line {
+        my Int $from = $pos;
         my $encoded = $line.encode('utf8');
         $pos += $encoded.elems + 1; # +1 for newline
         
@@ -48,7 +48,7 @@ method load(Str $path = $.file) {
     }
     
     $!metadata.load-meta;
-    for $!metadata.indices.keys -> $attr {
+    for $!metadata.indices.keys -> Str $attr {
         self.build-index($attr);
     }
     return self;
@@ -60,7 +60,8 @@ method insert($obj) {
     return self;
 }
 
-method find-by($class, $attr, $value) {
+method find-by($class, Str $attr, Str $value) {
+    %!index-counts{$attr} //= 0;
     %!index-counts{$attr}++;
     
     # Auto-index after 10 lookups
@@ -80,7 +81,7 @@ method find-by($class, $attr, $value) {
 }
 
 method commit() {
-    my $fh = $.file.IO.open(:r+ :bin);
+    my $fh = $.file.IO.open(:update, :bin);
 
     for %!store.values -> $obj {
         next unless $obj.can('is-dirty') && $obj.is-dirty;
@@ -90,23 +91,26 @@ method commit() {
         my $encoded  = $rendered.encode('utf8');
         my $new-len  = $encoded.elems;
 
-        # Use 'with' to ensure we have an entry and alias it to $_
-        with %!offsets{$id} -> $meta-raw {
-            # This is the "Nuclear Fix": 
-            # We destructure the hash/pair into raw local variables.
-            my Int $at     = $meta-raw<from>.Int;
-            my Int $old-len = $meta-raw<length>.Int;
+        if %!offsets{$id}:exists {
+            my $meta    = %!offsets{$id};
+            if $meta ~~ Hash {
+                my Int $at     = $meta{'from'} // die "No 'from' key";
+                my Int $old-len = $meta{'length'} // die "No 'length' key";
 
-            if $new-len == $old-len {
-                $fh.seek($at, 0);
-                $fh.write($encoded);
+                if $new-len == $old-len {
+                    $fh.seek($at);
+                    $fh.write($encoded);
+                } else {
+                    # Tombstone - write # followed by spaces to fill the old length
+                    $fh.seek($at);
+                    my Blob $tombstone = "#".encode('utf8') ~ Blob.new(32 xx ($old-len - 1));
+                    $fh.write($tombstone);
+                    
+                    # Use the private helper
+                    self!append-record($fh, $obj, $encoded);
+                }
             } else {
-                # Tombstone
-                $fh.seek($at, 0);
-                $fh.write("#".encode('utf8') ~ (" ".encode('utf8') x ($old-len - 1)));
-                
-                # Use the private helper
-                self!append-record($fh, $obj, $encoded);
+                die "Expected Hash but got { $meta.gist }";
             }
         } 
         else {
@@ -119,7 +123,7 @@ method commit() {
     return self;
 }
 
-method build-index($attr) {
+method build-index(Str $attr) {
     my %index;
     for %!store.values -> $obj {
         next unless $obj.can($attr);
@@ -132,16 +136,16 @@ method build-index($attr) {
 
 method store-object($obj, Int $from, Int $length) {
     %!store{$obj.id.Str} = $obj;
-    # Use a Map here; it's more rigid than a Hash
-    %!offsets{$obj.id.Str} = Map.new((from => $from, length => $length));
+    # Store as a regular Hash for consistent access
+    %!offsets{$obj.id.Str} = { from => $from, length => $length };
     $obj.mark-clean if $obj.can('mark-clean');
 }
 
 # Private helper to ensure clean offset storage
 method !append-record($fh, $obj, $encoded) {
-    $fh.seek(0, 2);
-    my $from = $fh.tell;
+    $fh.seek(0, SeekType::SeekFromEnd);
+    my Int $from = $fh.tell.Int;
     $fh.write($encoded ~ "\n".encode('utf8'));
     # Update offsets with forced Ints
-    %!offsets{$obj.id.Str} = { from => $from.Int, length => $encoded.elems.Int };
+    %!offsets{$obj.id.Str} = { from => $from, length => $encoded.elems.Int };
 }
