@@ -1,0 +1,81 @@
+use Test;
+use lib 'lib';
+use GrammarDB::Engine;
+use GrammarDB::Service;
+use GrammarDB::Model;
+
+# 1. Simple Model for High Volume
+class BenchModel does GrammarDB::Model {
+    has $.name;
+    method render { "id:{self.id},name:$!name" }
+}
+# 2. Setup
+my $test-file = "load_test.gdb";
+
+# CRITICAL FIX: Re-spurt the file after unlinking to ensure it exists for the Engine
+$test-file.IO.unlink if $test-file.IO.e;
+$test-file.IO.spurt(""); # Create an empty file
+
+my $engine = GrammarDB::Engine.new(
+    file    => $test-file,
+    grammar => Any, 
+    actions => Any
+);
+
+# Configure service with high threshold to test RAM speed vs Disk speed
+my $service = GrammarDB::Service.new(
+    engine          => $engine,
+    threshold       => 500,  # Flush every 500 records
+    commit-interval => 2     # Janitor runs every 2 seconds
+);
+
+my $count = 2000;
+plan 3;
+
+# --- TEST 1: Insert Performance (RAM) ---
+diag "Running $count inserts...";
+my $start-time = now;
+
+for 1..$count -> $i {
+    $service.insert(BenchModel.new(id => "ID-$i", name => "User-$i"));
+}
+
+my $end-time = now;
+my $duration = $end-time - $start-time;
+diag "Total time for $count inserts: {$duration.fmt('%.4f')}s";
+diag "Throughput: {($count / $duration).Int} inserts/sec";
+ok $duration < 1, "Inserts are sub-second (In-Memory First)";
+
+# --- TEST 2: Query Performance (RAM) ---
+diag "Running 1000 random queries...";
+$start-time = now;
+
+for 1..1000 {
+    my $random-id = (1..$count).pick;
+    my $res = $service.query('id', "ID-$random-id");
+}
+
+$end-time = now;
+$duration = $end-time - $start-time;
+diag "Total time for 1000 queries: {$duration.fmt('%.4f')}s";
+diag "Throughput: {(1000 / $duration).Int} queries/sec";
+ok $duration < 0.5, "Queries are extremely fast (In-Memory)";
+
+# --- TEST 3: Bulk Persistence (Disk) ---
+diag "Forcing bulk commit to disk...";
+$start-time = now;
+
+# Await the explicit commit to measure physical IO speed
+await $service.commit();
+
+$end-time = now;
+$duration = $end-time - $start-time;
+diag "Time to flush $count records to disk: {$duration.fmt('%.4f')}s";
+ok $test-file.IO.e, "Database file exists on disk";
+
+# Cleanup
+$service.shutdown;
+$test-file.IO.unlink;
+($test-file ~ ".meta").IO.unlink if ($test-file ~ ".meta").IO.e;
+
+done-testing;

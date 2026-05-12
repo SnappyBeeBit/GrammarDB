@@ -1,0 +1,58 @@
+use Test;
+use lib 'lib';
+use GrammarDB::Engine;
+use GrammarDB::Service;
+use GrammarDB::Model;
+
+class MockModel is GrammarDB::Model {
+    has $.id;
+    has $.name is rw;
+    method render { "id:$!id,name:$!name" }
+}
+
+my $test-file = "test_service.gdb";
+$test-file.IO.spurt("# GrammarDB Test File\n");
+
+my $engine = GrammarDB::Engine.new(
+    file    => $test-file,
+    grammar => Any, 
+    actions => Any
+);
+
+my $service = GrammarDB::Service.new(
+    engine          => $engine,
+    threshold       => 5,
+    commit-interval => 1
+);
+
+plan 5;
+
+# 1. TEST: Memory Immediacy (The Primary Vision)
+diag "Testing Memory Immediacy...";
+my $obj = MockModel.new(id => "101", name => "Initial");
+$service.insert($obj);
+is $service.query('id', '101')[0].name, "Initial", "RAM reflects insert immediately";
+
+# 2. TEST: Asynchronous Notification
+diag "Testing notify-change...";
+$obj.name = "Updated";
+$service.notify-change;
+is $service.query('id', '101')[0].name, "Updated", "RAM reflects update immediately";
+
+# 3. TEST: Promise Resolution (API Contract)
+diag "Testing commit() Promise...";
+my $p = $service.commit();
+isa-ok $p, Promise, "commit() returns a Promise";
+await $p;
+pass "commit() Promise resolved successfully";
+
+# 4. TEST: Graceful Shutdown
+diag "Testing Shutdown...";
+$service.shutdown;
+pass "Service shut down without hanging";
+
+# Cleanup
+$test-file.IO.unlink;
+($test-file ~ ".meta").IO.unlink if ($test-file ~ ".meta").IO.e;
+
+done-testing;

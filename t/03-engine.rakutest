@@ -63,7 +63,7 @@ class MarketplaceActions {
 my $path = 't/03-engine-fixture.gdb';
 spurt $path, "VND|V1|Alice|alice@example.com\nPRD|P1|Raku Widget|9.99|Software\nLST|L1|V1|P1|10\n";
 
-plan 4;
+plan 5;
 
 my $db = GrammarDB::Engine.new(file => $path, grammar => MarketplaceGrammar, actions => MarketplaceActions);
 $db.load;
@@ -74,3 +74,9 @@ is @software[0].name, 'Raku Widget', 'parsed object is correct';
 ok @software[0].is-dirty, 'proxy marks modified object dirty';
 $db.commit;
 ok !@software[0].is-dirty, 'commit cleans dirty object';
+
+#Simulate an asynchronous commit with queue-commit
+@software[0].price = 19.99;
+$db.queue-commit;
+sleep 1; # Give the committer thread a moment to process
+ok !@software[0].is-dirty, 'queued commit processed and cleaned object';

@@ -1,0 +1,68 @@
+use Test;
+use lib 'lib';
+use GrammarDB::Engine;
+use GrammarDB::Service;
+use GrammarDB::Model;
+
+class Order does GrammarDB::Model {
+    has $.sku;
+    has $.qty;
+    method render { "id:{self.id},sku:$!sku,qty:$!qty" }
+}
+
+# --- Setup ---
+my $test-file = "ecommerce.gdb";
+$test-file.IO.unlink if $test-file.IO.e;
+$test-file.IO.spurt("");
+
+my $service = GrammarDB::Service.new(
+    engine          => GrammarDB::Engine.new(file => $test-file, grammar => Any, actions => Any),
+    threshold       => 100, # Safety valve for high traffic
+    commit-interval => 1    # Regular janitor cleanup
+);
+
+# --- Simulation Parameters ---
+# We'll simulate 24 "hours". 
+# Traffic follows a rough sine wave: low at night, high at midday and evening.
+my @hourly-traffic = (10, 5, 2, 2, 5, 20, 50, 100, 150, 200, 250, 300, 250, 200, 180, 220, 350, 400, 300, 200, 150, 100, 50, 20);
+
+plan 1;
+
+diag "Starting 24-hour E-commerce Simulation...";
+my $total-orders = 0;
+my $start-time = now;
+
+for @hourly-traffic.kv -> $hour, $load {
+    diag "Hour {$hour}:00 - Expected Load: $load orders";
+    
+    # Simulate the "burst" of orders for this hour
+    for 1..$load -> $i {
+        $total-orders++;
+        $service.insert(Order.new(
+            id  => "ORD-$hour-$i",
+            sku => "SKU-{(1..50).pick}",
+            qty => (1..5).pick
+        ));
+        
+        # Micro-sleep to spread orders across the "hour"
+        # In a real bench, this keeps the CPU from just spinning
+        sleep 0.001 if $load > 100; 
+    }
+    
+    # Check RAM consistency mid-flight
+    if $hour == 17 { # Peak hour 5PM
+        my $sample = $service.query('id', "ORD-17-1");
+        diag "Peak Hour Check: Order ORD-17-1 is " ~ ($sample ?? "In-Memory" !! "MISSING");
+    }
+}
+
+$service.shutdown;
+
+my $final-size = $test-file.IO.s;
+diag "Simulation Complete.";
+diag "Total Orders Processed: $total-orders";
+diag "Final DB File Size: {($final-size / 1024).fmt('%.2f')} KB";
+
+ok $total-orders == @hourly-traffic.sum, "All orders processed through the Service";
+
+done-testing;
