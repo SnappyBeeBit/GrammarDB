@@ -80,9 +80,55 @@ method auto-track(\var) is rw {
 
 ---
 
-## 4. Key Features
+## 4. Key Features Implemented
 
-* **Surgical Updates:** Instead of rewriting the entire database for a single change, the engine utilizes **Match Offsets**. When a dirty record is committed, the engine uses `seek` to go to the exact byte position and replaces only the affected string.
-* **Persistent Metadata Sidecar:** The `.gdb.meta` file tracks index status, search frequency, and version mapping without bloating the main data file.
+* **Surgical Updates:** Instead of rewriting the entire database for a single change, the engine utilizes **Match Offsets**. When a dirty record is committed, the engine uses `seek` to go to the exact byte position and replaces only the affected string. If the replacement is larger, a tombstone (`#`) is written and the record is appended.
+* **Persistent Metadata Sidecar:** The `.gdb.meta` file tracks index status without bloating the main data file.
 * **Type-Safe Actions:** Raku Action classes "promote" raw text matches into type-safe Raku objects during the parse phase.
+* **Lazy Auto-Indexing:** The engine tracks attribute lookup frequency and automatically builds in-memory indexes after 10 lookups on an attribute.
+* **Automatic Dirty Tracking:** Uses Raku `Proxy` containers to automatically mark objects as dirty when fields are modified.
+
+---
+
+## 5. Implementation Status
+
+### Fully Implemented ✓
+
+**Engine (`lib/GrammarDB/Engine.rakumod`):**
+- `load()` - Parse and load records from file with byte offset tracking
+- `insert()` - Add new objects to the store
+- `find-by()` - Query objects by attribute with automatic lazy indexing
+- `commit()` - Persist dirty objects with surgical byte-level updates
+- `build-index()` - Create in-memory hash indexes for fast lookups
+- `store-object()` - Track object offsets for surgical updates
+- Type-safe attributes: `%!store`, `%!offsets of Hash`, `%!index-counts of Int`, `%!indices of Hash[Array]`
+
+**Model (`lib/GrammarDB/Model.rakumod`):**
+- `auto-track()` - Proxy-based automatic dirty flag management
+- `is-dirty()`, `mark-clean()`, `mark-dirty()` - Dirty state tracking
+- Type-safe return values: `Bool` for state methods
+
+**Metadata (`lib/GrammarDB/Metadata.rakumod`):**
+- `load-meta()` - Load index hints from `.gdb.meta` sidecar
+- `save-meta()` - Persist index hints
+- `is-indexed()`, `mark-indexed()` - Track indexed attributes
+- Type-safe attributes: `%!indices of Hash`, `%!search-counts of Int`
+
+**Parser (`lib/GrammarDB/Parser.rakumod`):**
+- Multi-version grammar support with ordered alternation (v2 | v1)
+- Action class for converting matches to objects
+- Support for variable-length types (VARCHAR with length constraints)
+
+### Test Coverage ✓
+
+All tests pass:
+- `t/01-model.rakutest` - Dirty tracking, proxies, clean/dirty state
+- `t/02-parser.rakutest` - Grammar parsing, version detection, value capture
+- `t/03-engine.rakutest` - Full integration: load, find-by, dirty tracking, commit
+
+### Quality Improvements
+
+- **Type Safety:** Meaningful type annotations on parameters, return values, and hash attributes
+- **No Empty Types:** Removed `Mu` (root type) in favor of specific, actionable types
+- **.gitignore:** Prevents precompiled `.precomp/` files from cluttering the repository
 
