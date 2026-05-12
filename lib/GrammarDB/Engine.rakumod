@@ -156,3 +156,7 @@ method !append-record($fh, $obj, $encoded) {
     $fh.write($encoded ~ "\n".encode('utf8'));
     %!offsets{$obj.id.Str} = { from => $from, length => $encoded.elems.Int };
 }
+
+method indices() {
+    return %!indices;
+}

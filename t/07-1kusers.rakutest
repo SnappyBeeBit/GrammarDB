@@ -1,0 +1,71 @@
+use Test;
+use lib 'lib';
+use GrammarDB::Engine;
+use GrammarDB::Service;
+use GrammarDB::Model;
+
+class Product does GrammarDB::Model {
+    has $.sku;
+    has $.category;
+    method render { "id:{self.id},sku:$!sku,cat:$!category" }
+}
+
+# --- Setup ---
+my $test-file = "search_sim.gdb";
+$test-file.IO.spurt("");
+
+my $service = GrammarDB::Service.new(
+    engine          => GrammarDB::Engine.new(file => $test-file, grammar => Any, actions => Any),
+    threshold       => 100,
+    commit-interval => 1
+);
+
+# 1. Seed the DB with 500 products across 5 categories
+diag "Seeding database with products...";
+for 1..500 -> $i {
+    $service.insert(Product.new(
+        id       => "P-$i",
+        sku      => "SKU-" ~ (1000 + $i),
+        category => <Electronics Books Home Garden Toys>.pick
+    ));
+}
+await $service.commit(); # Ensure they are on disk/indexed
+
+plan 2;
+
+# --- The Concurrent Search Simulation ---
+my $user-count = 1000;
+diag "Simulating $user-count concurrent users searching...";
+
+my $start-time = now;
+
+# Create 1000 promises representing 1000 user searches
+my @user-actions = (1..$user-count).map: -> $user-id {
+    start {
+        my $target-cat = <Electronics Books Home Garden Toys>.pick;
+        # Every user performs a query
+        my @results = $service.query('category', $target-cat);
+        
+        # Simulate a small "think time" or processing of results
+        die "User $user-id found nothing!" unless @results.elems > 0;
+        
+        @results.elems; 
+    }
+}
+
+# Wait for all "users" to finish their search
+my @all-results = await Promise.allof(@user-actions);
+my $end-time = now;
+
+my $total-duration = $end-time - $start-time;
+
+# --- Results Analysis ---
+diag "Simulation finished in {$total-duration.fmt('%.4f')} seconds";
+diag "Average search time: {(($total-duration / $user-count) * 1000).fmt('%.2f')}ms per user";
+
+ok $total-duration < 1, "Handled 1000 concurrent searches in under a second";
+ok %($service.engine.indices)<category>.defined, "Category index was automatically built during load";
+
+$service.shutdown;
+$test-file.IO.unlink;
+done-testing;
