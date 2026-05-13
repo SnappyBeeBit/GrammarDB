@@ -13,9 +13,7 @@ has %!offsets of Hash;                       # Maps object IDs to {from=>Int, le
 has %!index-counts of Int;                   # Tracks lookup counts per attribute
 has %!indices of Hash[Array];                # Maps attribute=>value=>Array of objects
 
-#Tweak: Modify the Engine after initialization to set up actions and metadata
 submethod TWEAK(:$grammar, :$actions) {
-    # We just need to handle the logic for actions and metadata
     if $actions.can('new') {
         $!actions = $actions.new;
     }
@@ -24,21 +22,18 @@ submethod TWEAK(:$grammar, :$actions) {
     }
     $!metadata = GrammarDB::Metadata.new(meta-path => $!file ~ '.meta');
 }
-#Read: Load all the data line by line (lazliy) from the database file into the store
+
 method load(Str $path = $.file) {
     return self unless $path.IO.e;
 
     my Int $pos = 0;
-    
     for $path.IO.lines -> Str $line {
         my Int $from = $pos;
-
         my $encoded = $line.encode('utf8');
         
         $pos += $encoded.elems + 1; 
 
         next if $line.trim eq '' || $line.starts-with('#');
-
         my $match = $!grammar.parse($line, :actions($!actions));
         
         if $match && $match.made {
@@ -55,26 +50,25 @@ method load(Str $path = $.file) {
     
     return self;
 }
-#Read: Store an existing object and its offset metadata
+
 method store-object(GrammarDB::Model $obj, Int $from, Int $length) {
     %!store{$obj.id.Str} = $obj;
     %!offsets{$obj.id.Str} = { from => $from, length => $length };
+    # Rely on the Model's internal state management
     $obj.mark-clean;
 }
 
-#Create: Insert a new dirty object into the store (no offset metadata yet)
 method insert(GrammarDB::Model $obj) {
     %!store{$obj.id.Str} = $obj;
+    # Ensure new objects are caught by the next commit
     $obj.mark-dirty;
     return self;
 }
 
-#Read: Find objects by class and attribute value, with auto-indexing
 method find-by($class, Str $attr, Str $value) {
     %!index-counts{$attr} //= 0;
     %!index-counts{$attr}++;
     
-    # Auto-index after 10 lookups
     if %!index-counts{$attr} >= 10 && !$!metadata.is-indexed($attr) {
         self.build-index($attr);
         $!metadata.mark-indexed($attr);
@@ -85,14 +79,14 @@ method find-by($class, Str $attr, Str $value) {
         return %!indices{$attr}{$value} // [];
     }
 
+    # Use the dynamic accessor (calling it with no args acts as a getter)
     return %!store.values.grep({
         .WHAT ~~ $class && .can($attr) && ."$attr"() eq $value
     });
 }
 
-#Update: commit changes to the file handling new records, updates and tombstoning
 method commit() {
-    #First step find all dirty grammar db models
+    # Find all objects that do the Model role and are marked dirty
     my @to-process = %!store.values.grep({ $_ ~~ GrammarDB::Model && .is-dirty }).list;
     return unless @to-process;
 
@@ -103,33 +97,24 @@ method commit() {
         my $encoded  = $obj.render.encode('utf8');
         my $new-len  = $encoded.elems;
 
-        #Does it exist within the file already
         if %!offsets{$id}:exists {
-            #capture the metadata for the record
-            my $meta    = %!offsets{$id};
+            my $meta = %!offsets{$id};
             if $meta ~~ Hash {
-                #pull data from the metadata 
-                my Int $at     = $meta{'from'} // die "No 'from' key";
-                my Int $old-len = $meta{'length'} // die "No 'length' key";
+                my Int $at      = $meta{'from'};
+                my Int $old-len = $meta{'length'};
 
-                #Did the record fit within the old length?
                 if $new-len == $old-len {
                     $fh.seek($at);
                     $fh.write($encoded);
                 } else {
-                    # Tombstone - write # followed by spaces to fill the old length
                     $fh.seek($at);
                     my Blob $tombstone = "#".encode('utf8') ~ Blob.new(32 xx ($old-len - 1));
                     $fh.write($tombstone);
-                    
                     self!append-record($fh, $obj, $encoded);
                 }
-            } else {
-                die "Expected Hash but got { $meta.gist }";
             }
         } 
         else {
-            # Offset didn't exist, just append
             self!append-record($fh, $obj, $encoded);
         }
         $obj.mark-clean;
@@ -137,10 +122,11 @@ method commit() {
     $fh.close;
     return self;
 }
-#Read: index builder that creates a mapping of attribute values to objects for fast lookup
+
 method build-index(Str $attr) {
-    my  Array %index;
+    my Array %index;
     for %!store.values -> $obj {
+        # Check for the dynamic accessor generated in Model's setup-accessors
         next unless $obj.can($attr);
         my $key = $obj."$attr"();
         %index{$key} //= [];
@@ -149,7 +135,6 @@ method build-index(Str $attr) {
     %!indices{$attr} = %index;
 }
 
-#Create: Append a record by finding the end of a file and writing there, then updating offsets
 method !append-record($fh, $obj, $encoded) {
     $fh.seek(0, SeekType::SeekFromEnd);
     my Int $from = $fh.tell.Int;

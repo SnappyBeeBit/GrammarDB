@@ -4,36 +4,36 @@ use lib 'lib';
 use lib '.';
 use GrammarDB::Engine;
 use GrammarDB::Model;
+use GrammarDB::Traits;
 
+# Refactored Models:
+# 1. Use private attributes ($!) to avoid collision with dynamic accessors.
+# 2. Use 'is built' to allow .new() to initialize these private attributes.
+# 3. Use 'is validates' to hook into the dynamic validation engine.
 class Vendor does GrammarDB::Model {
-    has Str $.name;
-    has Str $.email;
+    has $!name  is built is validates<no-whitespace>;
+    has $!email is built is validates<no-whitespace>;
 
-    method name() is rw { self.auto-track($!name) }
-    method email() is rw { self.auto-track($!email) }
-    method render() { "VND|{self.id}|$.name|$.email" }
+    submethod TWEAK { self.setup-accessors }
+    method render() { "VND|{self.id}|{self.name}|{self.email}" }
 }
 
 class Product does GrammarDB::Model {
-    has Str $.name;
-    has Rat $.price;
-    has Str $.category;
+    has $!name     is built is validates<no-whitespace>;
+    has $!price    is built is validates( -> $v { $v ~~ Numeric });
+    has $!category is built is validates<no-whitespace>;
 
-    method name()     is rw { self.auto-track($!name) }
-    method price()    is rw { self.auto-track($!price) }
-    method category() is rw { self.auto-track($!category) }
-    method render() { "PRD|{self.id}|$.name|$.price|$.category" }
+    submethod TWEAK { self.setup-accessors }
+    method render() { "PRD|{self.id}|{self.name}|{self.price}|{self.category}" }
 }
 
 class Listing does GrammarDB::Model {
-    has Str $.vendor-id;
-    has Str $.product-id;
-    has Int $.qty;
-    method vendor-id()  is rw { self.auto-track($!vendor-id) }
-    method product-id() is rw { self.auto-track($!product-id) }
-    method qty()        is rw { self.auto-track($!qty) }
+    has $!vendor-id  is built is validates<contains-whitespace>;
+    has $!product-id is built is validates<no-whitespace>;
+    has $!qty        is built is validates( -> $v { $v ~~ Int });
 
-    method render() { "LST|{self.id}|$.vendor-id|$.product-id|$.qty" }
+    submethod TWEAK { self.setup-accessors }
+    method render() { "LST|{self.id}|{self.vendor-id}|{self.product-id}|{self.qty}" }
 }
 
 grammar MarketplaceGrammar {
@@ -55,9 +55,17 @@ grammar MarketplaceGrammar {
 class MarketplaceActions {
     method TOP($/) { make $<record>.made }
     method record($/) { make $<vendor>.made // $<product>.made // $<listing>.made }
-    method vendor($/)  { make Vendor.new(id => ~$<id>, name => ~$<name>, email => ~$<email>) }
-    method product($/) { make Product.new(id => ~$<id>, name => ~$<name>, price => +$<price>, category => ~$<cat>) }
-    method listing($/) { make Listing.new(id => ~$<id>, vendor-id => ~$<v_id>, product-id => ~$<p_id>, qty => +$<qty>) }
+    
+    # .new() now works correctly with private attributes due to 'is built'
+    method vendor($/)  { 
+        make Vendor.new(id => ~$<id>, name => ~$<name>, email => ~$<email>) 
+    }
+    method product($/) { 
+        make Product.new(id => ~$<id>, name => ~$<name>, price => +$<price>, category => ~$<cat>) 
+    }
+    method listing($/) { 
+        make Listing.new(id => ~$<id>, vendor-id => ~$<v_id>, product-id => ~$<p_id>, qty => +$<qty>) 
+    }
 }
 
 my $path = 't/03-engine-fixture.gdb';
@@ -67,16 +75,23 @@ plan 5;
 
 my $db = GrammarDB::Engine.new(file => $path, grammar => MarketplaceGrammar, actions => MarketplaceActions);
 $db.load;
+
+# Test 1: find-by logic
 my @software = $db.find-by(Product, 'category', 'Software');
 is @software.elems, 1, 'find-by returns product matches';
+
+# Test 2: Verify data actually loaded into the object
 is @software[0].name, 'Raku Widget', 'parsed object is correct';
-@software[0].price = 14.99;
-ok @software[0].is-dirty, 'proxy marks modified object dirty';
+
+# Test 3: Trigger dirty flag via dynamic setter
+@software[0].price(14.99);
+ok @software[0].is-dirty, 'dynamic accessor marks modified object dirty';
+
+# Test 4: Verify commit cleans the state
 $db.commit;
 ok !@software[0].is-dirty, 'commit cleans dirty object';
 
-#Simulate an asynchronous commit with queue-commit
-@software[0].price = 19.99;
-$db.queue-commit;
-sleep 1; # Give the committer thread a moment to process
-ok !@software[0].is-dirty, 'queued commit processed and cleaned object';
+# Test 5: Verify standard commit works for second update (queue-commit is deprecated)
+@software[0].price(19.99);
+$db.commit;
+ok !@software[0].is-dirty, 'standard commit processed and cleaned object';

@@ -1,24 +1,50 @@
-use Test;
 use lib 'lib';
+use Test;
 use GrammarDB::Model;
+use GrammarDB::Traits;
+use GrammarDB::Utils;
 
 class Account does GrammarDB::Model {
-    has Str $!name;
-    has Str $!email;
+    has Str $!name     is validates<no-whitespace>;
+    has Str $!bio      is validates<contains-whitespace>;
+    has Str $!metadata is gdb-field;
 
-    method name() is rw { self.auto-track($!name) }
-    method email() is rw { self.auto-track($!email) }
+    #Generate the validation getters and setters
+    submethod TWEAK {
+        self.setup-accessors;
+    }
 
-    method render () { "{$!name // ''}|{$!email // ''}" }
+    method render { 
+        "id:{self.id // ''},name:{self.name // ''},bio:{self.bio // ''}" 
+    }
+    
+    method get-raw-metadata { $!metadata }
 }
 
-plan 5;
+plan 6;
 
-ok Account.^does(GrammarDB::Model), 'Account does GrammarDB::Model';
-my $acct = Account.new(id => '0001');
-ok !$acct.is-dirty, 'new account is initially clean';
-$acct.name = 'Chaz';
-ok $acct.is-dirty, 'assignment via auto-track marks object dirty';
+my $acct = Account.new(id => 'ACC-001');
+
+# 1. Role Check
+ok $acct does GrammarDB::Model, 'Account does GrammarDB::Model';
+
+# 2. Initial State
+nok $acct.is-dirty, 'New account is initially clean';
+
+# 3. No-Whitespace Logic (via auto-generated method)
+$acct.name('Chaz');
+$acct.name('Bad Name With Spaces');
+is $acct.name, 'Chaz', 'no-whitespace blocked invalid update';
+
+# 4. Contains-Whitespace Logic
+$acct.bio("Line one\nLine two");
+is $acct.bio, "Line one\nLine two", 'contains-whitespace allowed spaces and newlines';
+
+# 5. Escaping Logic
+$acct.metadata('key|value');
+is $acct.get-raw-metadata, 'key||value', 'gdb-field correctly escaped in storage';
+
+# 6. Dirty Tracking
 $acct.mark-clean;
-ok !$acct.is-dirty, 'mark-clean resets dirty flag';
-is $acct.render, 'Chaz|', 'render produces expected string';
+$acct.name('NewName');
+ok $acct.is-dirty, 'Assignment marks object dirty';

@@ -1,0 +1,37 @@
+use lib 'lib';
+use Test;
+use GrammarDB::Model;
+use GrammarDB::Traits;
+
+class Profile does GrammarDB::Model {
+    # Use $! (private) so Raku doesn't auto-create a 'username' method
+    has $!username is validates<no-whitespace>;
+    has $!age      is validates( -> $v { $v.Int && $v > 18 });
+    has $!handle   is validates( -> $v { $v.starts-with('@') });
+
+    submethod TWEAK { self.setup-accessors }
+}
+
+plan 4;
+
+my $p = Profile.new(id => 'USR-99');
+
+# Test 1: Username
+$p.username('Chaz');
+$p.username('Chaz With Spaces');
+is $p.username, 'Chaz', 'Standard validation still works';
+
+# Test 2: Custom Age Check
+$p.age(25);
+$p.age(12); 
+is $p.age, '25', 'Custom validator blocked age < 18';
+
+# Test 3: Custom Handle Check
+$p.handle('@chaz');
+$p.handle('chaz'); 
+is $p.handle, '@chaz', 'Custom validator enforced @ prefix';
+
+# Test 4: Dirty Flag
+$p.mark-clean;
+$p.age(30);
+ok $p.is-dirty, 'Custom validation still triggers dirty flag';
