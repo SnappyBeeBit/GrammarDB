@@ -27,7 +27,7 @@ class Product does GrammarDB::Model {
 }
 
 class Listing does GrammarDB::Model {
-    has $!vendor-id  is built is validates<contains-whitespace>;
+    has $!vendor-id  is built is validates<no-control-chars>;
     has $!product-id is built is validates<no-whitespace>;
     has $!qty        is built is validates( -> $v { $v ~~ Int });
 

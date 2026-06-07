@@ -28,7 +28,7 @@ method setup-accessors {
                 else {
                     given $rule {
                         when 'no-whitespace'       { !($val ~~ /\s | <:Cc>/) }
-                        when 'contains-whitespace' { !($val ~~ /<:Cc - [\n]>/) }
+                        when 'no-control-chars' { !($val ~~ /<:Cc - [\n]>/) }
                         default                    { True }
                     }
                 }

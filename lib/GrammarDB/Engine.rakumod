@@ -14,11 +14,11 @@ has %!index-counts of Int;                   # Tracks lookup counts per attribut
 has %!indices of Hash[Array];                # Maps attribute=>value=>Array of objects
 
 submethod TWEAK(:$grammar, :$actions) {
-    if $actions.can('new') {
-        $!actions = $actions.new;
+    if $actions.DEFINITE {
+        $!actions = $actions;
     }
     else {
-        $!actions = $actions;
+        $!actions = $actions.new;
     }
     $!metadata = GrammarDB::Metadata.new(meta-path => $!file ~ '.meta');
 }
@@ -81,8 +81,8 @@ method find-by($class, Str $attr, Str $value) {
 
     # Use the dynamic accessor (calling it with no args acts as a getter)
     return %!store.values.grep({
-        .WHAT ~~ $class && .can($attr) && ."$attr"() eq $value
-    });
+        $_ ~~ $class && .can($attr) && ."$attr"() eq $value
+    }).list;
 }
 
 method commit() {
@@ -90,6 +90,7 @@ method commit() {
     my @to-process = %!store.values.grep({ $_ ~~ GrammarDB::Model && .is-dirty }).list;
     return unless @to-process;
 
+    $.file.IO.spurt('') unless $.file.IO.e;
     my $fh = $.file.IO.open(:update, :bin);
 
     for @to-process -> $obj {
@@ -142,6 +143,10 @@ method !append-record($fh, $obj, $encoded) {
     %!offsets{$obj.id.Str} = { from => $from, length => $encoded.elems.Int };
 }
 
+method all-of($class) {
+    return %!store.values.grep({ $_ ~~ $class }).list;
+}
+
 method indices() {
-    return %!indices;
+    return %!indices.clone;
 }

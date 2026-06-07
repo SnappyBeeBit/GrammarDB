@@ -6,7 +6,7 @@ use GrammarDB::Utils;
 
 class Account does GrammarDB::Model {
     has Str $!name     is validates<no-whitespace>;
-    has Str $!bio      is validates<contains-whitespace>;
+    has Str $!bio      is validates<no-control-chars>;
     has Str $!metadata is validates<gdb-field>;
 
     #Generate the validation getters and setters
@@ -38,7 +38,7 @@ is $acct.name, 'Chaz', 'no-whitespace blocked invalid update';
 
 # 4. Contains-Whitespace Logic
 $acct.bio("Line one\nLine two");
-is $acct.bio, "Line one\nLine two", 'contains-whitespace allowed spaces and newlines';
+is $acct.bio,     "Line one\nLine two", 'no-control-chars allowed spaces and newlines';
 
 # 5. Escaping Logic
 $acct.metadata('key|value');

@@ -9,20 +9,19 @@ has $.commit-interval = 1;
 has Int $!unsaved-changes = 0;
 has Lock $!lock .= new;
 has $!janitor-thread;
-has $!is-running = True;
+has atomicint $!is-running = 1;
 
 submethod TWEAK() {
     $!janitor-thread = start {
         while $!is-running {
             sleep $!commit-interval;
-            # Janitor uses the same locked logic as everyone else
             self.commit;
         }
     }
 }
 
-method query(Str $attr, Str $val) {
-    $!lock.protect: { return $!engine.find-by(Any, $attr, $val) }
+method query(Str $attr, Str $val, :$class = Any) {
+    $!lock.protect: { return $!engine.find-by($class, $attr, $val) }
 }
 
 method insert(GrammarDB::Model $obj) {
@@ -59,6 +58,7 @@ method commit() {
 }
 
 method shutdown() {
-    $!is-running = False;
+    $!is-running ⚛= 0;
     try await $!janitor-thread;
+    $!lock.protect: { $!engine.commit }
 }

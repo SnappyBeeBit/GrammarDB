@@ -148,7 +148,7 @@ Built-in validation rules for `is validates<...>`:
 | Rule | Behavior |
 |---|---|
 | `'no-whitespace'` | Rejects values containing spaces or control characters |
-| `'contains-whitespace'` | Allows spaces and newlines but rejects other control characters |
+| `'no-control-chars'` | Allows spaces and newlines but rejects other control characters |
 | `'gdb-field'` | Accepts any valid field (escape-pipe only) |
 | `Callable` | Custom validator `-> $v { ... }` — return truthy to accept |
 

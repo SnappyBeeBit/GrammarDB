@@ -10,7 +10,7 @@ sub escape(Str $val is copy, :@custom) is export {
     $val.subst($target, -> $m {
         given $m.Str {
             when "\n" { '\n' }
-            when '#'  { $m.pos == 0 ?? '\#' !! '#' }
+            when '#'  { $m.from == 0 ?? '\#' !! '#' }
             when '|'  { '||' }
             default   { '\\' ~ $_ }
         }
