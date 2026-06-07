@@ -7,7 +7,7 @@ use GrammarDB::Utils;
 class Account does GrammarDB::Model {
     has Str $!name     is validates<no-whitespace>;
     has Str $!bio      is validates<contains-whitespace>;
-    has Str $!metadata is gdb-field;
+    has Str $!metadata is validates<gdb-field>;
 
     #Generate the validation getters and setters
     submethod TWEAK {

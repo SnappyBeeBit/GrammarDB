@@ -1,6 +1,6 @@
 use lib 'lib';
 use GrammarDB::Engine;
-use lib '.';
+use lib 'examples';
 use MarketplaceModels;
 use MarketplaceGrammar;
 

@@ -59,6 +59,7 @@ class MarketplaceActions {
 }
 
 use lib 'lib';
+use lib 'examples';
 use GrammarDB::Engine;
 use MarketplaceModels;
 use MarketplaceGrammar;

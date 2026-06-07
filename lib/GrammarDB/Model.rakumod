@@ -4,6 +4,8 @@ use GrammarDB::Utils;
 has Str $.id is rw;
 has Bool $.is-dirty is rw = False;
 
+my %accessors-installed;
+
 method mark-clean { $!is-dirty = False }
 method mark-dirty { $!is-dirty = True  }
 
@@ -11,6 +13,9 @@ method mark-dirty { $!is-dirty = True  }
 method is-dirty { $!is-dirty }
 
 method setup-accessors {
+    my $class-id = self.^name;
+    return if %accessors-installed{$class-id};
+    %accessors-installed{$class-id} = True;
     for self.^attributes -> $attr {
         next unless $attr.^can('validation-type');
         
@@ -28,11 +33,12 @@ method setup-accessors {
                     }
                 }
                 if $ok {
-                    $attr.set_value(self, escape($val.Str));
+                    $attr.set_value(self, $attr.type ~~ Str ?? escape($val.Str) !! $val);
                     self.mark-dirty;
                 }
             } else {
-                return unescape($attr.get_value(self) // "");
+                my $raw = $attr.get_value(self) // "";
+                return $attr.type ~~ Str ?? unescape($raw) !! $raw;
             }
         });
     }

@@ -1,9 +1,8 @@
 unit module GrammarDB::Traits;
 
 multi sub trait_mod:<is>(Attribute $attr, :$validates!) is export {
-    $attr does role { has $.validation-type = $validates };
+    $attr does role { has $.validation-type is rw };
+    $attr.validation-type = $validates;
 }
 
-multi sub trait_mod:<is>(Attribute $attr, :$gdb-field!) is export {
-    $attr does role { has $.validation-type = 'gdb-field' };
-}
+# gdb-field is handled via validates<gdb-field> — no separate multi needed.

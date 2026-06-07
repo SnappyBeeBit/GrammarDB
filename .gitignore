@@ -8,6 +8,10 @@ __pycache__/
 *.o
 *.dylib
 
+# Development artifacts
+development-progress.md
+testplan.md
+
 # IDE and editor files
 .vscode/
 .idea/
@@ -18,4 +22,5 @@ __pycache__/
 
 # Test artifacts
 *.gdb
+*.gdb.meta
 t/*.gdb

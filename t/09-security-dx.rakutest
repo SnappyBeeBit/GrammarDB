@@ -1,0 +1,254 @@
+use Test;
+use lib 'lib', 'examples';
+use MarketplaceGrammar;
+use MarketplaceModels;
+use GrammarDB::Engine;
+use GrammarDB::Model;
+use GrammarDB::Traits;
+
+my $actions  = MarketplaceActions.new;
+
+# ---------------------------------------------------------------------------
+# Helpers — keep tests concise and self-documenting
+# ---------------------------------------------------------------------------
+sub reject($desc, $input, :$rule = Nil) {
+    my $m = $rule.defined
+        ?? MarketplaceGrammar.parse($input, :$rule, :$actions)
+        !! MarketplaceGrammar.parse($input, :$actions);
+    nok $m.defined, $desc;
+}
+
+sub reject-try($desc, $input, :$rule = Nil) {
+    my $m = try {
+        my $x = $rule.defined
+            ?? MarketplaceGrammar.parse($input, :$rule, :$actions)
+            !! MarketplaceGrammar.parse($input, :$actions);
+        try $x.made if $x.defined;
+        $x.defined;
+        $x
+    };
+    nok $m.defined, $desc;
+}
+
+sub accept($desc, $input, :$rule = Nil) {
+    my $m = $rule.defined
+        ?? MarketplaceGrammar.parse($input, :$rule, :$actions)
+        !! MarketplaceGrammar.parse($input, :$actions);
+    ok $m.defined, $desc;
+    return $m;
+}
+
+sub with-engine($file, &blk) {
+    my $e = GrammarDB::Engine.new(
+        file    => $file,
+        grammar => MarketplaceGrammar,
+        actions => MarketplaceActions
+    );
+    $e.load;
+    &blk($e);
+}
+
+# ---------------------------------------------------------------------------
+# 1  — Injection Prevention
+# ---------------------------------------------------------------------------
+
+# Pipe (|) is the field delimiter — must be rejected inside any field
+reject "pipe in vendor id",      'VND|bad|id|name|email@x.com',   :rule<vendor>;
+reject "pipe in vendor name",    'VND|my-id|bad|name|e@x.com',    :rule<vendor>;
+reject "pipe in vendor email",   'VND|id-1|name|bad@x|com',      :rule<vendor>;
+reject "pipe in product id",     'PRD|bad|id|name|1.99|cat',      :rule<product>;
+reject "pipe in product name",   'PRD|id-1|bad|name|1.99|cat',    :rule<product>;
+reject "pipe in product price",  'PRD|id-1|name|1|99|cat',        :rule<product>;
+reject "pipe in product cat",    'PRD|id-1|name|1.99|bad|cat',    :rule<product>;
+reject-try "pipe in listing id",    'LST|bad|id|vid-1|pid-1|5',  :rule<listing>;
+reject-try "pipe in listing v_id",  'LST|id-1|bad|vid|pid-1|5',  :rule<listing>;
+reject-try "pipe in listing p_id",  'LST|id-1|vid-1|bad|pid|5',  :rule<listing>;
+reject-try "pipe in listing qty",   'LST|id-1|vid-1|pid-1|5|extra', :rule<listing>;
+
+# Newline — rejected where tokens exclude it, accepted otherwise
+reject "newline in vendor email",    "VND|id|n|e\nBAD",               :rule<vendor>;
+reject "newline in listing qty",     "LST|id|v|p|5\nx",               :rule<listing>;
+my $m14 = accept("newline in vendor name",   "VND|id-1|line1\nline2|e@x.com", :rule<vendor>);
+is $m14.made.name, "line1\nline2", "vendor name preserves \\n";
+my $m15 = accept("newline in product name",  "PRD|id-1|line1\nline2|1.99|c",  :rule<product>);
+is $m15.made.name, "line1\nline2", "product name preserves \\n";
+my $m16 = accept("newline in listing v_id",  "LST|id-1|vid\n-1|pid-1|5",      :rule<listing>);
+is $m16.made.vendor-id, "vid\n-1", "listing v_id preserves \\n";
+my $m17 = accept("newline in listing p_id",  "LST|id-1|vid-1|pid\n-1|5",      :rule<listing>);
+is $m17.made.product-id, "pid\n-1", "listing p_id preserves \\n";
+
+# Structure — wrong field count or empty input
+reject "extra field in product", 'PRD|id|name|price|cat|extra',  :rule<product>;
+reject "vendor missing field",   'VND|id-1|name',                 :rule<vendor>;
+reject "listing missing field",  'LST|id-1|vid-1',                :rule<listing>;
+reject "empty string as vendor", '',                              :rule<vendor>;
+
+# Type safety — bad numeric input
+reject-try "non-numeric product price",  'PRD|id|name|abc|cat',       :rule<product>;
+reject-try "decimal qty in listing",     'LST|id|v|p|3.5',            :rule<listing>;
+
+# ---------------------------------------------------------------------------
+# 2  — Developer Experience — Happy Path
+# ---------------------------------------------------------------------------
+
+my $v    = accept "valid vendor",  'VND|v1|Acme Corp|contact@acme.com', :rule<vendor>;
+isa-ok $v.made, Vendor,  "vendor result is Vendor";
+is $v.made.name, 'Acme Corp', "vendor name accessible";
+
+my $p    = accept "valid product", 'PRD|p1|Widget|19.99|tools',         :rule<product>;
+isa-ok $p.made, Product, "product result is Product";
+is $p.made.name, 'Widget', "product name accessible";
+
+my $lst  = accept "valid listing", 'LST|l1|v1|p1|42',                   :rule<listing>;
+isa-ok $lst.made, Listing, "listing result is Listing";
+is $lst.made.qty, 42, "listing qty accessible";
+
+my $m29 = accept("integer price coerces to Rat", 'PRD|p2|Gadget|5.0|elec', :rule<product>);
+isa-ok $m29.made.price, Rat, "price is Rat";
+
+# TOP rule dispatches to the right record type
+my $tv = accept "TOP parses vendor",  'VND|v-1|TV|t@v.com';
+isa-ok $tv.made, Vendor,  "TOP → Vendor";
+my $tp = accept "TOP parses product", 'PRD|p-1|TP|9.99|gen';
+isa-ok $tp.made, Product, "TOP → Product";
+my $tl = accept "TOP parses listing", 'LST|l-1|v-1|p-1|7';
+isa-ok $tl.made, Listing, "TOP → Listing";
+reject "TOP rejects unknown record", 'BOGUS|foo';
+
+# ---------------------------------------------------------------------------
+# 3  — Developer Experience — Natural API Usage
+#    (Proves security doesn't ruin writability)
+# ---------------------------------------------------------------------------
+
+# 3a — Create → read fields
+my $vendor = Vendor.new(id => "dx-1", name => "Dexter Labs", email => "dex@labs.io");
+is $vendor.name,  "Dexter Labs",  "3a: getter returns constructor value";
+is $vendor.email, "dex@labs.io",  "3a: email getter works";
+nok $vendor.is-dirty, "3a: new object starts clean (insert() marks dirty)";
+
+# 3b — Modify → dirty tracking via method-call setter
+$vendor.name("Dexter Industries");
+is $vendor.name,  "Dexter Industries", "3b: setter updates value";
+ok $vendor.is-dirty, "3b: setter marks dirty";
+
+# 3c — Mark clean → stays clean until next write
+$vendor.mark-clean;
+nok $vendor.is-dirty, "3c: mark-clean clears dirty";
+$vendor.name("Dexter Corp");
+ok $vendor.is-dirty, "3c: write after clean marks dirty again";
+
+# 3d — Render produces parseable output
+my $rendered = $vendor.render;
+like $rendered, /^ 'VND|' .+ '|' .+ '|' .+ $ /, "3d: render is pipe-delimited";
+
+# 3e — Full lifecycle: insert → commit → reload → verify
+my $lifecycle-db = '/tmp/dx-lifecycle.gdb';
+spurt $lifecycle-db, '';
+with-engine $lifecycle-db, -> $eng {
+    $eng.insert($vendor);
+    $eng.commit;
+}
+# Reload in fresh engine
+my $eng2 = GrammarDB::Engine.new(
+    file    => $lifecycle-db,
+    grammar => MarketplaceGrammar,
+    actions => MarketplaceActions
+);
+$eng2.load;
+my @found = $eng2.find-by(Vendor, 'name', 'Dexter Corp');
+is @found.elems, 1,           "3e: committed record found by name";
+is @found[0].name, 'Dexter Corp', "3e: committed value survives reload";
+unlink $lifecycle-db;
+
+# 3f — Multiple object types coexist
+my $multi-db = '/tmp/dx-multi.gdb';
+spurt $multi-db, '';
+with-engine $multi-db, -> $eng {
+    $eng.insert(Vendor.new(id => "mv",  name => "Multi Vendor",  email => "mv@x.com"));
+    $eng.insert(Product.new(id => "mp", name => "Multi Product", price => 9.99, category => "gen"));
+    $eng.insert(Listing.new(id => "ml", vendor-id => "mv", product-id => "mp", qty => 3));
+    $eng.commit;
+}
+my $eng3 = GrammarDB::Engine.new(
+    file    => $multi-db,
+    grammar => MarketplaceGrammar,
+    actions => MarketplaceActions
+);
+$eng3.load;
+is $eng3.find-by(Vendor,  'name', 'Multi Vendor').elems,  1, "3f: vendor survives multi-type commit";
+is $eng3.find-by(Product, 'name', 'Multi Product').elems, 1, "3f: product survives multi-type commit";
+is $eng3.find-by(Listing, 'id',   'ml').elems,            1, "3f: listing survives multi-type commit";
+unlink $multi-db;
+
+# 3g — Error messages are thrown (not swallowed) on bad input
+my $bad-input = 'PRD|bad|name|abc|cat';
+my $caught = try { MarketplaceGrammar.parse($bad-input, :rule<product>, :actions($actions)) };
+nok $caught.defined, "3g: bad product parse throws (dev sees error)";
+
+# ---------------------------------------------------------------------------
+# 4  — Silent Failure Detection
+#    (Verifies the developer CAN detect when something goes wrong)
+# ---------------------------------------------------------------------------
+
+# 4a — Production model assignment syntax doesn't work (method-call does)
+my $sf = Vendor.new(id => "sf-1", name => "Orig", email => "o@x.com");
+dies-ok { $sf.name = "Hacked" }, "4a: assignment syntax not supported (use method-call)";
+lives-ok { $sf.name("Updated") }, "4a: method-call setter works";
+
+# 4b — load() on nonexistent file returns self (silent) — check store afterwards
+my $missing = GrammarDB::Engine.new(
+    file    => '/tmp/nonexistent-sf.gdb',
+    grammar => MarketplaceGrammar,
+    actions => MarketplaceActions
+);
+lives-ok { $missing.load }, "4b: load missing file doesn't throw";
+ok $missing.load.defined,    "4b: load returns self even when no data loaded";
+
+# 4c — Validation rejects invalid values → value unchanged, return Nil
+my class TestVendor does GrammarDB::Model {
+    has $!name  is validates<no-whitespace>;
+    has $!email is validates<no-whitespace>;
+    submethod TWEAK { self.setup-accessors }
+    method render() { "T|{self.id}|{self.name}|{self.email}" }
+}
+my $tvendor = TestVendor.new(id => "tv");
+$tvendor.name("Good");
+my $ret = $tvendor.name("Bad value with spaces");
+is $tvendor.name, "Good",    "4c: validator rejects bad value silently";
+nok $ret.defined,          "4c: setter returns Nil on rejection";
+
+# 4d — commit() returns Nil when nothing dirty
+my $nodirty-db = '/tmp/dx-nodirty.gdb';
+spurt $nodirty-db, '';
+with-engine $nodirty-db, -> $eng {
+    my $r = $eng.commit;
+    nok $r.defined, "4d: commit returns Nil when nothing dirty";
+}
+
+# 4e — render() with unset attrs produces empty (not crash)
+my $partial = Vendor.new(id => "empty-1");
+is $partial.render, "VND|empty-1||", "4e: render with unset fields produces empty slots";
+
+# 4f — build-index with unset attribute → type-object keys, invisible to string lookups
+my class Partial does GrammarDB::Model {
+    has $!name  is built;
+    has $!email is built;
+    submethod TWEAK { self.setup-accessors }
+    method render() { "P|{self.id}" }
+}
+my $partial-db = '/tmp/dx-partial-idx.gdb';
+spurt $partial-db, '';
+with-engine $partial-db, -> $eng {
+    $eng.insert(Partial.new(id => "pm-1", name => Str));
+    $eng.build-index('name');
+    my @r = $eng.find-by(Partial, 'name', '');
+    nok @r.elems, "4f: unset attr not found via empty-string lookup";
+}
+
+# Clean up temp files
+unlink $lifecycle-db;
+unlink $multi-db;
+unlink $nodirty-db;
+unlink $partial-db;
+
+done-testing;

@@ -1,134 +1,186 @@
-# GrammarDB: The Language-Oriented Raku Database
+# GrammarDB
 
-**GrammarDB** is a self-managed, language-oriented, and Raku-native database engine. Unlike traditional databases that require rigid schemas and external SQL drivers, GrammarDB uses **Raku Grammars** as its physical schema and **Raku Objects** as its native interface.
-
----
-
-## Repository Layout
-
-- `lib/GrammarDB/Model.rakumod` — model role and object dirty-tracking logic
-- `lib/GrammarDB/Parser.rakumod` — grammar and action skeleton
-- `lib/GrammarDB/Engine.rakumod` — engine loader, store, and commit logic
-- `lib/GrammarDB/Metadata.rakumod` — metadata/index sidecar manager
-- `main.raku` — root demo entry point
-- `testplan.md` — test plan for validating the implementation
-
----
-
-## 1. Core Philosophy
-
-* **Grammar as Schema:** The physical layout of the data on disk is defined by a standard Raku Grammar.
-* **Hybrid Evolution:** Supports multiple versions of a record in the same file simultaneously through ordered alternation.
-* **Zero-Migration:** Data "heals" or upgrades as it is accessed, eliminating the need for expensive "stop-the-world" migrations.
-* **Raku Native:** No external dependencies. Leverages Raku's Meta-Object Protocol (MOP) for indexing and tracking.
-
----
-
-## 2. Architecture Overview
-
-### The Storage Layer (The Grammar)
-
-Data is stored in plain text files. Each line is parsed independently.
+A Raku-native, language-oriented database engine that uses Grammars as schemas and Raku objects as interfaces.
 
 ```raku
-grammar MarketplaceGrammar {
-    rule TOP { <record> }
-    rule record { <product_v2> | <product_v1> | <vendor> }
-    
-    # Version 2 adds a category field
-    rule product_v2 { 'PROD' <id> '[' <name> ',' <price> ',' <cat> ']' }
-    rule product_v1 { 'PROD' <id> '[' <name> ',' <price> ']' }
+use GrammarDB::Engine;
+use GrammarDB::Model;
+
+# Grammar defines the on-disk format
+grammar MySchema {
+    token TOP { <user> }
+    token user { 'USR|' <id> '|' <name> '|' <email> }
 }
 
+# Model defines the in-memory object
+class User does GrammarDB::Model {
+    has $!name  is built is validates<no-whitespace>;
+    has $!email is built is validates<no-whitespace>;
+    submethod TWEAK { self.setup-accessors }
+    method render() { "USR|{self.id}|{self.name}|{self.email}" }
+}
+
+# Engine ties them together
+my $db = GrammarDB::Engine.new(
+    file    => 'data.gdb',
+    grammar => MySchema,
+    actions => MyActions
+);
+$db.load;
+$db.insert(User.new(id => 'u1', name => 'Alice', email => 'a@b.com'));
+$db.commit;
 ```
 
-### The Model Layer (Native Raku Roles)
+## Installation
 
-Models are standard Raku classes that consume the `GrammarDB::Model` role.
+```bash
+zef install https://github.com/SnappyBeeBit/GrammarDB.git
+```
 
-* **Auto-Tracking:** Uses a `Proxy` container to automatically mark a record as `$!dirty` when an attribute is modified via an assignment.
-* **Identity Map:** Ensures the engine maintains a single source of truth for a specific ID in memory.
+Or from a local clone:
 
-### The Performance Engine (Lazy Indexing)
+```bash
+git clone https://github.com/SnappyBeeBit/GrammarDB.git
+cd GrammarDB
+zef install .
+```
 
-GrammarDB avoids unnecessary memory overhead by using **Lazy Indexing**:
+## Architecture
 
-1. **Learning Phase:** New attributes are searched via $O(n)$ full-file scans.
-2. **Threshold Promotion:** Once an attribute is searched $X$ times, the engine automatically builds an in-memory hash map.
-3. **Instruction Persistence:** The intent to index is saved in a `.gdb.meta` sidecar file so indexes are rebuilt instantly on startup.
+### Grammar-as-Schema
 
----
+Data files are plain text. A Raku Grammar defines every byte: tokens describe field delimiters, record separators, and type markers. Multiple schema versions coexist via ordered alternation (`<v2> | <v1>`).
 
-## 3. Technical Implementation
+### Raku Objects as Interface
 
-### Automatic Dirty Tracking
+Model classes consume the `GrammarDB::Model` role and receive dirty-tracking, auto-generated validated accessors, and rendering. Changes are detected automatically — no manual `mark-dirty()` calls needed.
 
-The `GrammarDB::Model` role uses a `Proxy` to intercept assignments, removing the need for manual `update()` calls:
+### Surgical Updates
+
+`commit()` performs byte-level in-place edits using `seek` + `write`. If a record grows, a tombstone (`#`) marks the old location and the new version is appended. Full rewrites are avoided.
+
+### Lazy Indexing
+
+The engine tracks per-attribute lookup frequency. After 10 lookups on the same attribute, an in-memory hash index is automatically built. Index intent is persisted in a `.gdb.meta` sidecar file.
+
+## Modules
+
+| Module | Purpose |
+|---|---|
+| `GrammarDB::Model` | Role with dirty tracking, setup-accessors, `is-dirty`/`mark-clean`/`mark-dirty` |
+| `GrammarDB::Engine` | Load, insert, find-by, commit, build-index |
+| `GrammarDB::Parser` | `Grammar` base grammar and `Action` base role |
+| `GrammarDB::Service` | Thread-safe wrapper with auto-commit janitor |
+| `GrammarDB::Metadata` | `.gdb.meta` sidecar for index persistence |
+| `GrammarDB::Traits` | `is validates<...>` trait for attribute validation |
+| `GrammarDB::Utils` | `escape` / `unescape` functions for pipe-delimited storage |
+
+## Usage
+
+### Defining a Model
 
 ```raku
-method auto-track(\var) is rw {
-    Proxy.new(
-        FETCH => -> $ { var },
-        STORE => -> $, $val {
-            var = $val;
-            $!dirty = True; 
-        }
-    );
-}
+use GrammarDB::Model;
+use GrammarDB::Traits;
 
+class Product does GrammarDB::Model {
+    has $!name     is built is validates<no-whitespace>;
+    has $!price    is built is validates( -> $v { $v ~~ Numeric });
+    has $!category is built is validates<no-whitespace>;
+
+    submethod TWEAK { self.setup-accessors }
+    method render() { "PRD|{self.id}|{self.name}|{self.price}|{self.category}" }
+}
 ```
 
----
+Key points:
+- Attributes use `$!` (private) to avoid collision with auto-generated accessors.
+- `is built` allows `Product.new(...)` to initialize private attributes.
+- `is validates<no-whitespace>` hooks into the validation engine.
+- `self.setup-accessors` in `TWEAK` generates getter/setter methods with validation.
+- `render()` produces the text format for disk persistence.
 
-## 4. Key Features Implemented
+### Using a Grammar + Action
 
-* **Surgical Updates:** Instead of rewriting the entire database for a single change, the engine utilizes **Match Offsets**. When a dirty record is committed, the engine uses `seek` to go to the exact byte position and replaces only the affected string. If the replacement is larger, a tombstone (`#`) is written and the record is appended.
-* **Persistent Metadata Sidecar:** The `.gdb.meta` file tracks index status without bloating the main data file.
-* **Type-Safe Actions:** Raku Action classes "promote" raw text matches into type-safe Raku objects during the parse phase.
-* **Lazy Auto-Indexing:** The engine tracks attribute lookup frequency and automatically builds in-memory indexes after 10 lookups on an attribute.
-* **Automatic Dirty Tracking:** Uses Raku `Proxy` containers to automatically mark objects as dirty when fields are modified.
+```raku
+use GrammarDB::Parser;
 
----
+grammar MySchema is GrammarDB::Parser::Grammar {
+    token record { <product> }
+    token product { 'PRD|' <id> '|' <name> '|' <price> '|' <cat> }
+}
 
-## 5. Implementation Status
+class MyActions does GrammarDB::Parser::Action {
+    method product($/) {
+        make Product.new(id => ~$<id>, name => ~$<name>,
+                         price => +$<price>, category => ~$<cat>);
+    }
+}
+```
 
-### Fully Implemented ✓
+### Running the Engine
 
-**Engine (`lib/GrammarDB/Engine.rakumod`):**
-- `load()` - Parse and load records from file with byte offset tracking
-- `insert()` - Add new objects to the store
-- `find-by()` - Query objects by attribute with automatic lazy indexing
-- `commit()` - Persist dirty objects with surgical byte-level updates
-- `build-index()` - Create in-memory hash indexes for fast lookups
-- `store-object()` - Track object offsets for surgical updates
-- Type-safe attributes: `%!store`, `%!offsets of Hash`, `%!index-counts of Int`, `%!indices of Hash[Array]`
+```raku
+use GrammarDB::Engine;
 
-**Model (`lib/GrammarDB/Model.rakumod`):**
-- `auto-track()` - Proxy-based automatic dirty flag management
-- `is-dirty()`, `mark-clean()`, `mark-dirty()` - Dirty state tracking
-- Type-safe return values: `Bool` for state methods
+my $db = GrammarDB::Engine.new(
+    file    => 'products.gdb',
+    grammar => MySchema,
+    actions => MyActions
+);
+$db.load;
 
-**Metadata (`lib/GrammarDB/Metadata.rakumod`):**
-- `load-meta()` - Load index hints from `.gdb.meta` sidecar
-- `save-meta()` - Persist index hints
-- `is-indexed()`, `mark-indexed()` - Track indexed attributes
-- Type-safe attributes: `%!indices of Hash`, `%!search-counts of Int`
+# Query
+my @results = $db.find-by(Product, 'category', 'Software');
 
-**Parser (`lib/GrammarDB/Parser.rakumod`):**
-- Multi-version grammar support with ordered alternation (v2 | v1)
-- Action class for converting matches to objects
-- Support for variable-length types (VARCHAR with length constraints)
+# Insert
+$db.insert(Product.new(id => 'P99', name => 'New Item',
+                        price => 29.99, category => 'Hardware'));
 
-### Test Coverage ✓
+# Commit
+$db.commit;
+```
 
-All tests pass:
-- `t/01-model.rakutest` - Dirty tracking, proxies, clean/dirty state
-- `t/02-parser.rakutest` - Grammar parsing, version detection, value capture
-- `t/03-engine.rakutest` - Full integration: load, find-by, dirty tracking, commit
+### Validation Rules
 
-### Quality Improvements
+Built-in validation rules for `is validates<...>`:
 
-- **Type Safety:** Meaningful type annotations on parameters, return values, and hash attributes
-- **No Empty Types:** Removed `Mu` (root type) in favor of specific, actionable types
-- **.gitignore:** Prevents precompiled `.precomp/` files from cluttering the repository
+| Rule | Behavior |
+|---|---|
+| `'no-whitespace'` | Rejects values containing spaces or control characters |
+| `'contains-whitespace'` | Allows spaces and newlines but rejects other control characters |
+| `'gdb-field'` | Accepts any valid field (escape-pipe only) |
+| `Callable` | Custom validator `-> $v { ... }` — return truthy to accept |
 
+## Examples
+
+The `examples/` directory contains a working Marketplace demo:
+
+- `MarketplaceGrammar.rakumod` — grammar and actions for VND/PRD/LST records
+- `MarketplaceModels.rakumod` — Vendor, Product, Listing model classes
+- `main.raku` — end-to-end demo: load, query, insert, commit
+
+Run it:
+
+```bash
+raku -Ilib -Iexamples examples/main.raku
+```
+
+## Development
+
+### Running Tests
+
+```bash
+for f in t/*.rakutest; do raku -Ilib "$f"; done
+```
+
+### Adding a Model Class
+
+1. Create a class that `does GrammarDB::Model`.
+2. Declare private attributes (`$!`) with `is built` and `is validates<...>`.
+3. Call `self.setup-accessors` in `submethod TWEAK`.
+4. Implement `method render()` returning the pipe-delimited text format.
+
+## License
+
+MIT

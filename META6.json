@@ -1,0 +1,26 @@
+{
+  "name": "GrammarDB",
+  "version": "0.1.0",
+  "description": "A Raku-native, language-oriented database engine that uses Grammars as schemas and Raku objects as interfaces.",
+  "authors": ["SnappyBeeBit"],
+  "license": "MIT",
+  "source-url": "https://github.com/SnappyBeeBit/GrammarDB.git",
+  "perl": "6.*",
+  "depends": [],
+  "build-depends": [],
+  "test-depends": ["Test"],
+  "provides": {
+    "GrammarDB::Model": "lib/GrammarDB/Model.rakumod",
+    "GrammarDB::Engine": "lib/GrammarDB/Engine.rakumod",
+    "GrammarDB::Parser": "lib/GrammarDB/Parser.rakumod",
+    "GrammarDB::Parser::Action": "lib/GrammarDB/Parser.rakumod",
+    "GrammarDB::Parser::Grammar": "lib/GrammarDB/Parser.rakumod",
+    "GrammarDB::Metadata": "lib/GrammarDB/Metadata.rakumod",
+    "GrammarDB::Service": "lib/GrammarDB/Service.rakumod",
+    "GrammarDB::Traits": "lib/GrammarDB/Traits.rakumod",
+    "GrammarDB::Utils": "lib/GrammarDB/Utils.rakumod",
+    "MarketplaceModels": "examples/MarketplaceModels.rakumod",
+    "MarketplaceGrammar": "examples/MarketplaceGrammar.rakumod"
+  },
+  "resources": []
+}
