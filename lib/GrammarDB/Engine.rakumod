@@ -147,6 +147,13 @@ method all-of($class) {
     return %!store.values.grep({ $_ ~~ $class }).list;
 }
 
+method search($class, :&where?) {
+    if &where {
+        return %!store.values.grep({ $_ ~~ $class && &where($_) }).list;
+    }
+    return %!store.values.grep({ $_ ~~ $class }).list;
+}
+
 method indices() {
     return %!indices.clone;
 }
